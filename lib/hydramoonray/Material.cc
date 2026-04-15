@@ -27,6 +27,7 @@
 #include <iostream>
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 
 using namespace scene_rdl2::rdl2;
 using namespace scene_rdl2::math;
@@ -51,6 +52,13 @@ endsWith(const std::string& value, const std::string& suffix)
         value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
+bool
+startsWith(const std::string& value, const std::string& prefix)
+{
+    return value.size() >= prefix.size() &&
+        value.compare(0, prefix.size(), prefix) == 0;
+}
+
 std::string
 toLower(std::string value)
 {
@@ -58,6 +66,316 @@ toLower(std::string value)
         return static_cast<char>(std::tolower(c));
     });
     return value;
+}
+
+bool
+isUsdUVTextureIdentifier(const pxr::TfToken& identifier)
+{
+    return toLower(identifier.GetString()) == "usduvtexture";
+}
+
+bool
+isMaterialXStandardSurfaceIdentifier(const pxr::TfToken& identifier)
+{
+    const std::string idLower = toLower(identifier.GetString());
+    return idLower == "mtlxstandard_surface" ||
+           idLower.find("standard_surface") != std::string::npos;
+}
+
+bool
+isMaterialXImageIdentifier(const pxr::TfToken& identifier)
+{
+    const std::string idLower = toLower(identifier.GetString());
+    return idLower == "mtlximage" ||
+           startsWith(idLower, "nd_image_") ||
+           idLower.find("nd_image_") != std::string::npos;
+}
+
+bool
+isMaterialXTiledImageIdentifier(const pxr::TfToken& identifier)
+{
+    const std::string idLower = toLower(identifier.GetString());
+    return idLower == "mtlxtiledimage" ||
+           startsWith(idLower, "nd_tiledimage_") ||
+           idLower.find("nd_tiledimage_") != std::string::npos;
+}
+
+bool
+isMaterialXImageOrTiledIdentifier(const pxr::TfToken& identifier)
+{
+    return isMaterialXImageIdentifier(identifier) ||
+           isMaterialXTiledImageIdentifier(identifier);
+}
+
+bool
+isMaterialXTexcoordIdentifier(const pxr::TfToken& identifier)
+{
+    const std::string idLower = toLower(identifier.GetString());
+    return idLower == "mtlxtexcoord" ||
+           startsWith(idLower, "nd_texcoord_") ||
+           idLower.find("nd_texcoord_") != std::string::npos;
+}
+
+bool
+isMaterialXGeompropIdentifier(const pxr::TfToken& identifier)
+{
+    const std::string idLower = toLower(identifier.GetString());
+    return idLower == "mtlxgeompropvalue" ||
+           startsWith(idLower, "nd_geompropvalue_") ||
+           idLower.find("nd_geompropvalue_") != std::string::npos;
+}
+
+bool
+isMaterialXTexcoordLikeIdentifier(const pxr::TfToken& identifier)
+{
+    return isMaterialXTexcoordIdentifier(identifier) ||
+           isMaterialXGeompropIdentifier(identifier);
+}
+
+bool
+looksLikeImageIdentifier(const pxr::TfToken& identifier)
+{
+    const std::string idLower = toLower(identifier.GetString());
+    return idLower.find("image") != std::string::npos ||
+           idLower.find("uvtexture") != std::string::npos;
+}
+
+bool
+isTruthEnvEnabled(const char* name)
+{
+    const char* value = std::getenv(name);
+    if (!value) {
+        return false;
+    }
+    const std::string lower = toLower(std::string(value));
+    return lower == "1" || lower == "true" || lower == "yes" || lower == "on";
+}
+
+bool
+shouldDumpMaterialNetworkMap()
+{
+    return isTruthEnvEnabled("HDMOONRAY_MTLX_DUMP_NETWORK");
+}
+
+bool
+extractStringValue(const pxr::VtValue& value, std::string& out)
+{
+    if (value.IsHolding<std::string>()) {
+        out = value.UncheckedGet<std::string>();
+        return true;
+    }
+    if (value.IsHolding<pxr::TfToken>()) {
+        out = value.UncheckedGet<pxr::TfToken>().GetString();
+        return true;
+    }
+    if (value.IsHolding<pxr::SdfAssetPath>()) {
+        const pxr::SdfAssetPath& assetPath = value.UncheckedGet<pxr::SdfAssetPath>();
+        out = assetPath.GetResolvedPath().empty() ? assetPath.GetAssetPath() : assetPath.GetResolvedPath();
+        return true;
+    }
+    return false;
+}
+
+bool
+isRepeatWrapModeString(const std::string& s)
+{
+    const std::string lower = toLower(s);
+    return lower == "repeat" || lower == "periodic";
+}
+
+bool
+parseWrapModeRepeat(const pxr::VtValue& value, bool& isRepeat)
+{
+    std::string wrap;
+    if (extractStringValue(value, wrap)) {
+        isRepeat = isRepeatWrapModeString(wrap);
+        return true;
+    }
+    if (value.IsHolding<int>()) {
+        // UsdUVTexture wrap enum: repeat == 2
+        isRepeat = (value.UncheckedGet<int>() == 2);
+        return true;
+    }
+    if (value.IsHolding<long>()) {
+        isRepeat = (value.UncheckedGet<long>() == 2);
+        return true;
+    }
+    if (value.IsHolding<long long>()) {
+        isRepeat = (value.UncheckedGet<long long>() == 2);
+        return true;
+    }
+    return false;
+}
+
+void
+applyImageMapWrapAroundMapping(std::map<pxr::TfToken, pxr::VtValue>& params,
+                               const pxr::SdfPath& nodePath)
+{
+    static const pxr::TfToken tWrapAround("wrap_around");
+    static const pxr::TfToken tWrapS("wrapS");
+    static const pxr::TfToken tWrapT("wrapT");
+    static const pxr::TfToken tUAddressMode("uaddressmode");
+    static const pxr::TfToken tVAddressMode("vaddressmode");
+    static const pxr::TfToken tUAddress("uaddress");
+    static const pxr::TfToken tVAddress("vaddress");
+
+    bool hasWrapSignal = false;
+    bool wrapAround = true;
+    auto applyWrapToken = [&](const pxr::TfToken& key) {
+        auto it = params.find(key);
+        if (it == params.end()) {
+            return;
+        }
+        bool isRepeat = false;
+        if (parseWrapModeRepeat(it->second, isRepeat)) {
+            hasWrapSignal = true;
+            wrapAround = wrapAround && isRepeat;
+        }
+    };
+
+    applyWrapToken(tWrapS);
+    applyWrapToken(tWrapT);
+    applyWrapToken(tUAddressMode);
+    applyWrapToken(tVAddressMode);
+    applyWrapToken(tUAddress);
+    applyWrapToken(tVAddress);
+
+    if (hasWrapSignal) {
+        params[tWrapAround] = pxr::VtValue(wrapAround);
+        Logger::debug(nodePath, ": bridged wrap modes -> wrap_around=", wrapAround ? "true" : "false");
+    }
+}
+
+void
+applyMaterialXImageMapping(std::map<pxr::TfToken, pxr::VtValue>& params,
+                           const pxr::SdfPath& nodePath)
+{
+    static const pxr::TfToken tTexture("texture");
+    static const pxr::TfToken tFile("file");
+    if (params.find(tTexture) == params.end()) {
+        auto fileIt = params.find(tFile);
+        if (fileIt != params.end()) {
+            params[tTexture] = fileIt->second;
+            Logger::debug(nodePath, ": bridged image parameter file -> texture");
+        }
+    }
+    applyImageMapWrapAroundMapping(params, nodePath);
+}
+
+void
+applyMaterialXTexcoordLikeMapping(const pxr::HdMaterialNode& node,
+                                  std::map<pxr::TfToken, pxr::VtValue>& params)
+{
+    static const pxr::TfToken tVarName("varname");
+    static const pxr::TfToken tGeomProp("geomprop");
+    static const pxr::TfToken tAttribute("attribute");
+    static const pxr::TfToken tDefault("default");
+    static const pxr::TfToken tFallback("fallback");
+
+    std::string varname("st");
+    auto useStringParam = [&](const pxr::TfToken& key) {
+        auto it = params.find(key);
+        if (it == params.end()) {
+            return;
+        }
+        std::string value;
+        if (extractStringValue(it->second, value) && !value.empty()) {
+            varname = value;
+        }
+    };
+    useStringParam(tGeomProp);
+    useStringParam(tVarName);
+    useStringParam(tAttribute);
+
+    params[tVarName] = pxr::VtValue(varname);
+    Logger::debug(node.path, ": bridged texcoord node varname='", varname, "'");
+
+    if (params.find(tFallback) == params.end()) {
+        auto defaultIt = params.find(tDefault);
+        if (defaultIt != params.end()) {
+            params[tFallback] = defaultIt->second;
+        }
+    }
+}
+
+bool
+hasNonEmptyImagePath(const std::map<pxr::TfToken, pxr::VtValue>& params)
+{
+    static const pxr::TfToken tTexture("texture");
+    static const pxr::TfToken tFile("file");
+    const pxr::VtValue* pathValue = nullptr;
+    auto textureIt = params.find(tTexture);
+    if (textureIt != params.end()) {
+        pathValue = &(textureIt->second);
+    } else {
+        auto fileIt = params.find(tFile);
+        if (fileIt != params.end()) {
+            pathValue = &(fileIt->second);
+        }
+    }
+
+    if (!pathValue) {
+        return false;
+    }
+
+    if (pathValue->IsHolding<pxr::SdfAssetPath>()) {
+        const pxr::SdfAssetPath& assetPath = pathValue->UncheckedGet<pxr::SdfAssetPath>();
+        return !(assetPath.GetResolvedPath().empty() && assetPath.GetAssetPath().empty());
+    }
+    if (pathValue->IsHolding<std::string>()) {
+        return !pathValue->UncheckedGet<std::string>().empty();
+    }
+    if (pathValue->IsHolding<pxr::TfToken>()) {
+        return !pathValue->UncheckedGet<pxr::TfToken>().IsEmpty();
+    }
+    return true;
+}
+
+std::string
+resolveOutputAttributeName(const scene_rdl2::rdl2::SceneObject* output,
+                           const pxr::TfToken& outputName,
+                           const pxr::SdfPath& outputId)
+{
+    static const pxr::TfToken tBaseColor("base_color");
+    if (output &&
+        output->getSceneClass().getName() == "DwaBaseMaterial") {
+        if (outputName == tBaseColor) {
+            Logger::debug(outputId, ": remapped output attribute base_color -> albedo");
+            return "albedo";
+        }
+    }
+    if (output &&
+        output->getSceneClass().getName() == "ImageMap") {
+        const std::string outputNameLower = toLower(outputName.GetString());
+        if (outputNameLower == "st" || outputNameLower == "texcoord" || outputNameLower == "uv") {
+            Logger::debug(outputId, ": remapped image coord input ", outputName, " -> input_texture_coordinates");
+            return "input_texture_coordinates";
+        }
+    }
+    return outputName.GetString();
+}
+
+void
+configureImageMapTexcoordMode(scene_rdl2::rdl2::SceneObject* output,
+                              const std::string& outputAttributeName,
+                              const pxr::SdfPath& outputId)
+{
+    if (!output || output->getSceneClass().getName() != "ImageMap" ||
+        outputAttributeName != "input_texture_coordinates") {
+        return;
+    }
+    const scene_rdl2::rdl2::Attribute* textureCoordinatesAttr =
+        output->getSceneClass().getAttribute("texture_coordinates");
+    if (!textureCoordinatesAttr ||
+        textureCoordinatesAttr->getType() != scene_rdl2::rdl2::TYPE_INT) {
+        return;
+    }
+    const auto textureCoordinatesKey =
+        output->getSceneClass().getAttributeKey<Int>("texture_coordinates");
+    const int enumValue =
+        output->getSceneClass().getEnumValue(textureCoordinatesKey, "input texture coordinates");
+    output->set(textureCoordinatesKey, enumValue);
+    Logger::debug(outputId, ": set ImageMap.texture_coordinates = input texture coordinates");
 }
 
 bool
@@ -322,8 +640,13 @@ makeMoonrayShader(
     const pxr::HdRprim* geom
 ) {
     std::string className = node.identifier.GetString();
-    const std::string identifierLower = toLower(className);
-    const bool isMaterialXStandardSurface = identifierLower.find("standard_surface") != std::string::npos;
+    const bool isMaterialXStandardSurface = isMaterialXStandardSurfaceIdentifier(node.identifier);
+    const bool isMaterialXImageOrTiled = isMaterialXImageOrTiledIdentifier(node.identifier);
+    const bool isMaterialXTexcoordLike = isMaterialXTexcoordLikeIdentifier(node.identifier);
+    const bool isImageLikeButNotAllowed =
+        looksLikeImageIdentifier(node.identifier) &&
+        !isMaterialXImageOrTiled &&
+        !isUsdUVTextureIdentifier(node.identifier);
 
     if (className == "BaseMaterial") {
         className = "DwaBaseMaterial";
@@ -331,9 +654,23 @@ makeMoonrayShader(
     } else if (isMaterialXStandardSurface) {
         className = "DwaBaseMaterial";
         Logger::info(node.path, ": bridged MaterialX standard_surface -> DwaBaseMaterial");
+    } else if (isMaterialXImageOrTiled) {
+        className = "ImageMap";
+        Logger::debug(node.path, ": bridged image node '", node.identifier, "' -> ImageMap");
+    } else if (isMaterialXTexcoordLike) {
+        className = "UsdPrimvarReader_float2";
+        Logger::debug(node.path, ": bridged texcoord node '", node.identifier, "' -> UsdPrimvarReader_float2");
+    } else if (isImageLikeButNotAllowed) {
+        Logger::debug(node.path, ": image-like node id not allowlisted: '", node.identifier, "'");
     }
 
     std::map<pxr::TfToken, pxr::VtValue> params(node.parameters.begin(), node.parameters.end());
+    if (isMaterialXImageOrTiled) {
+        applyMaterialXImageMapping(params, node.path);
+    }
+    if (isMaterialXTexcoordLike) {
+        applyMaterialXTexcoordLikeMapping(node, params);
+    }
     if (isMaterialXStandardSurface) {
         applyMaterialXStandardSurfaceMapping(node, params);
     }
@@ -432,7 +769,9 @@ Material::updateTerminal(pxr::TfToken terminalName,
         return nullptr;
     }
 
-    // dumpMaterialNetworkMap(networkmap);
+    if (shouldDumpMaterialNetworkMap()) {
+        dumpMaterialNetworkMap(networkmap);
+    }
 
     const pxr::HdMaterialNetwork& network = i->second;
 
@@ -467,14 +806,12 @@ Material::updateTerminal(pxr::TfToken terminalName,
     scene_rdl2::rdl2::SceneObject* last = nullptr;
     for (const pxr::HdMaterialNode& node : network.nodes) {
         scene_rdl2::rdl2::SceneObject* next = nullptr;
-        // Don't create UsdUVTexture nodes if their file name parameter is empty
-        if (node.identifier == "UsdUVTexture") {
-            auto valIt = node.parameters.find(pxr::TfToken("file"));
-            if (valIt != node.parameters.end()) {
-                if (valIt->second.UncheckedGet<pxr::SdfAssetPath>().GetResolvedPath().empty()) {
-                    continue;
-                }
-            }
+        // Skip image map creation when texture/file path is empty.
+        if ((isUsdUVTextureIdentifier(node.identifier) ||
+             isMaterialXImageOrTiledIdentifier(node.identifier)) &&
+            !hasNonEmptyImagePath(node.parameters)) {
+            Logger::debug(node.path, ": skipping image node '", node.identifier, "' with empty texture/file path");
+            continue;
         }
 
         // Create a node for each channel entry
@@ -553,24 +890,41 @@ Material::updateTerminal(pxr::TfToken terminalName,
         }
 
         // UsdUVTexture map special handling
-        if (std::string::npos && input->getSceneClass().getName() == "UsdUVTexture") {
+        if (input->getSceneClass().getName() == "UsdUVTexture") {
             try {
                 UpdateGuard guard(input);
 
                 // Decode normal maps
                 if (renderDelegate.getDecodeNormals() &&
                     rel.outputName.GetString().find("normal") != std::string::npos) {
-
-                    input->set(input->getSceneClass().getAttributeKey<Rgb>("scale"), Rgb(2.0f));
-                    input->set(input->getSceneClass().getAttributeKey<Rgb>("bias"), Rgb(-1.0f));
-                    input->set(input->getSceneClass().getAttributeKey<Int>("sourceColorSpace"), 0);
+                    const scene_rdl2::rdl2::Attribute* scaleAttr =
+                        input->getSceneClass().getAttribute("scale");
+                    const scene_rdl2::rdl2::Attribute* biasAttr =
+                        input->getSceneClass().getAttribute("bias");
+                    const scene_rdl2::rdl2::Attribute* sourceColorSpaceAttr =
+                        input->getSceneClass().getAttribute("sourceColorSpace");
+                    if (scaleAttr && scaleAttr->getType() == scene_rdl2::rdl2::TYPE_RGB) {
+                        input->set(AttributeKey<Rgb>(*scaleAttr), Rgb(2.0f));
+                    }
+                    if (biasAttr && biasAttr->getType() == scene_rdl2::rdl2::TYPE_RGB) {
+                        input->set(AttributeKey<Rgb>(*biasAttr), Rgb(-1.0f));
+                    }
+                    if (sourceColorSpaceAttr &&
+                        sourceColorSpaceAttr->getType() == scene_rdl2::rdl2::TYPE_INT) {
+                        input->set(AttributeKey<Int>(*sourceColorSpaceAttr), 0);
+                    }
                 }
 
                 // Channel binding
-                const std::string channel = rel.inputName.GetString();
-                const auto outputModeKey = input->getSceneClass().getAttributeKey<Int>("output_mode");
-                int enumValue = input->getSceneClass().getEnumValue(outputModeKey, channel);
-                input->set(outputModeKey, enumValue);
+                const scene_rdl2::rdl2::Attribute* outputModeAttr =
+                    input->getSceneClass().getAttribute("output_mode");
+                if (outputModeAttr &&
+                    outputModeAttr->getType() == scene_rdl2::rdl2::TYPE_INT) {
+                    const std::string channel = rel.inputName.GetString();
+                    const auto outputModeKey = input->getSceneClass().getAttributeKey<Int>("output_mode");
+                    int enumValue = input->getSceneClass().getEnumValue(outputModeKey, channel);
+                    input->set(outputModeKey, enumValue);
+                }
             } catch (const std::exception& e) {
                 Logger::error(rel.outputId, ": ", e.what());
                 last = nullptr;
@@ -597,9 +951,17 @@ Material::updateTerminal(pxr::TfToken terminalName,
 
                 try {
                     UpdateGuard guard(output);
+                    const std::string outputAttributeName =
+                        resolveOutputAttributeName(output, rel.outputName, rel.outputId);
 
                     const scene_rdl2::rdl2::Attribute* attribute(
-                        output->getSceneClass().getAttribute(rel.outputName.GetString()));
+                        output->getSceneClass().getAttribute(outputAttributeName));
+                    if (!attribute) {
+                        Logger::debug(rel.outputId, ": skipping connection to unknown output attribute '",
+                                      outputAttributeName, "' for scene class ", output->getSceneClass().getName());
+                        continue;
+                    }
+                    configureImageMapTexcoordMode(output, outputAttributeName, rel.outputId);
 
                     if (attribute->getType() == scene_rdl2::rdl2::TYPE_SCENE_OBJECT) {
                         output->set(AttributeKey<SceneObject*>(*attribute), input);
@@ -619,9 +981,17 @@ Material::updateTerminal(pxr::TfToken terminalName,
 
             try {
                 UpdateGuard guard(output);
+                const std::string outputAttributeName =
+                    resolveOutputAttributeName(output, rel.outputName, rel.outputId);
 
                 const scene_rdl2::rdl2::Attribute* attribute(
-                    output->getSceneClass().getAttribute(rel.outputName.GetString()));
+                    output->getSceneClass().getAttribute(outputAttributeName));
+                if (!attribute) {
+                    Logger::debug(rel.outputId, ": skipping connection to unknown output attribute '",
+                                  outputAttributeName, "' for scene class ", output->getSceneClass().getName());
+                    continue;
+                }
+                configureImageMapTexcoordMode(output, outputAttributeName, rel.outputId);
 
                 if (attribute->getType() == scene_rdl2::rdl2::TYPE_SCENE_OBJECT) {
                     output->set(AttributeKey<SceneObject*>(*attribute), input);
