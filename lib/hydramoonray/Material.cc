@@ -133,6 +133,15 @@ isMaterialXTexcoordLikeIdentifier(const pxr::TfToken& identifier)
 }
 
 bool
+isMaterialXPlace2dIdentifier(const pxr::TfToken& identifier)
+{
+    const std::string idLower = toLower(identifier.GetString());
+    return idLower == "mtlxplace2d" ||
+           (idLower.find("nd_") != std::string::npos &&
+            idLower.find("place2d") != std::string::npos);
+}
+
+bool
 looksLikeImageIdentifier(const pxr::TfToken& identifier)
 {
     const std::string idLower = toLower(identifier.GetString());
@@ -149,6 +158,26 @@ isTruthEnvEnabled(const char* name)
     }
     const std::string lower = toLower(std::string(value));
     return lower == "1" || lower == "true" || lower == "yes" || lower == "on";
+}
+
+void
+debugLogSelectedParams(const pxr::SdfPath& nodePath,
+                       const char* label,
+                       const std::map<pxr::TfToken, pxr::VtValue>& params,
+                       const std::initializer_list<pxr::TfToken>& keys)
+{
+    std::string summary;
+    bool first = true;
+    for (const pxr::TfToken& key : keys) {
+        if (!first) {
+            summary += ", ";
+        }
+        first = false;
+        summary += key.GetString();
+        summary += '=';
+        summary += (params.find(key) != params.end()) ? "Y" : "N";
+    }
+    Logger::debug(nodePath, ": ", label, " authored params: ", summary);
 }
 
 bool
@@ -247,16 +276,37 @@ applyImageMapWrapAroundMapping(std::map<pxr::TfToken, pxr::VtValue>& params,
 }
 
 void
-applyMaterialXImageMapping(std::map<pxr::TfToken, pxr::VtValue>& params,
+applyMaterialXImageMapping(const pxr::TfToken& identifier,
+                           std::map<pxr::TfToken, pxr::VtValue>& params,
                            const pxr::SdfPath& nodePath)
 {
     static const pxr::TfToken tTexture("texture");
     static const pxr::TfToken tFile("file");
+    static const pxr::TfToken tUvTiling("uvtiling");
+    static const pxr::TfToken tUvOffset("uvoffset");
+    static const pxr::TfToken tScale("scale");
+    static const pxr::TfToken tOffset("offset");
     if (params.find(tTexture) == params.end()) {
         auto fileIt = params.find(tFile);
         if (fileIt != params.end()) {
             params[tTexture] = fileIt->second;
             Logger::debug(nodePath, ": bridged image parameter file -> texture");
+        }
+    }
+    if (isMaterialXTiledImageIdentifier(identifier)) {
+        if (params.find(tScale) == params.end()) {
+            auto tilingIt = params.find(tUvTiling);
+            if (tilingIt != params.end()) {
+                params[tScale] = tilingIt->second;
+                Logger::debug(nodePath, ": bridged tiledimage parameter uvtiling -> scale");
+            }
+        }
+        if (params.find(tOffset) == params.end()) {
+            auto offsetIt = params.find(tUvOffset);
+            if (offsetIt != params.end()) {
+                params[tOffset] = offsetIt->second;
+                Logger::debug(nodePath, ": bridged tiledimage parameter uvoffset -> offset");
+            }
         }
     }
     applyImageMapWrapAroundMapping(params, nodePath);
@@ -298,6 +348,54 @@ applyMaterialXTexcoordLikeMapping(const pxr::HdMaterialNode& node,
     }
 }
 
+void
+applyMaterialXPlace2dMapping(const pxr::HdMaterialNode& node,
+                             std::map<pxr::TfToken, pxr::VtValue>& params)
+{
+    static const pxr::TfToken tIn("in");
+    static const pxr::TfToken tTexcoord("texcoord");
+    static const pxr::TfToken tInput("input");
+    static const pxr::TfToken tCoord("coord");
+    static const pxr::TfToken tRotation("rotation");
+    static const pxr::TfToken tRotate("rotate");
+    static const pxr::TfToken tTranslation("translation");
+    static const pxr::TfToken tTranslate("translate");
+    static const pxr::TfToken tOffset("offset");
+    static const pxr::TfToken tPivot("pivot");
+    static const pxr::TfToken tOperationOrder("operationorder");
+
+    if (params.find(tIn) == params.end()) {
+        if (params.find(tTexcoord) != params.end()) {
+            params[tIn] = params[tTexcoord];
+        } else if (params.find(tInput) != params.end()) {
+            params[tIn] = params[tInput];
+        } else if (params.find(tCoord) != params.end()) {
+            params[tIn] = params[tCoord];
+        }
+    }
+    if (params.find(tRotation) == params.end()) {
+        auto rotateIt = params.find(tRotate);
+        if (rotateIt != params.end()) {
+            params[tRotation] = rotateIt->second;
+        }
+    }
+    if (params.find(tTranslation) == params.end()) {
+        if (params.find(tTranslate) != params.end()) {
+            params[tTranslation] = params[tTranslate];
+        } else if (params.find(tOffset) != params.end()) {
+            params[tTranslation] = params[tOffset];
+        }
+    }
+    if (params.find(tPivot) != params.end()) {
+        Logger::debug(node.path, ": place2d pivot authored but not fully represented in v2 bridge");
+    }
+    if (params.find(tOperationOrder) != params.end()) {
+        Logger::debug(node.path, ": place2d operationorder authored but not fully represented in v2 bridge");
+    }
+
+    Logger::debug(node.path, ": bridged place2d node params for UsdTransform2d");
+}
+
 bool
 hasNonEmptyImagePath(const std::map<pxr::TfToken, pxr::VtValue>& params)
 {
@@ -334,9 +432,33 @@ hasNonEmptyImagePath(const std::map<pxr::TfToken, pxr::VtValue>& params)
 std::string
 resolveOutputAttributeName(const scene_rdl2::rdl2::SceneObject* output,
                            const pxr::TfToken& outputName,
-                           const pxr::SdfPath& outputId)
+                           const pxr::SdfPath& outputId,
+                           const scene_rdl2::rdl2::SceneObject* input)
 {
     static const pxr::TfToken tBaseColor("base_color");
+    static const pxr::TfToken tIn("in");
+    static const pxr::TfToken tOut("out");
+    auto isUvLikeInput = [input]() {
+        if (!input) {
+            return false;
+        }
+        const std::string inputClassName = input->getSceneClass().getName();
+        return inputClassName == "UsdTransform2d" ||
+               inputClassName == "UsdPrimvarReader_float2";
+    };
+
+    if (outputName.IsEmpty()) {
+        Logger::debug(outputId, ": relationship outputName is empty");
+        if (output && output->getSceneClass().getName() == "ImageMap" && isUvLikeInput()) {
+            Logger::debug(outputId, ": empty outputName UV fallback -> input_texture_coordinates");
+            return "input_texture_coordinates";
+        }
+        if (output && output->getSceneClass().getName() == "UsdTransform2d" && isUvLikeInput()) {
+            Logger::debug(outputId, ": empty outputName UV fallback -> in");
+            return "in";
+        }
+    }
+
     if (output &&
         output->getSceneClass().getName() == "DwaBaseMaterial") {
         if (outputName == tBaseColor) {
@@ -347,9 +469,20 @@ resolveOutputAttributeName(const scene_rdl2::rdl2::SceneObject* output,
     if (output &&
         output->getSceneClass().getName() == "ImageMap") {
         const std::string outputNameLower = toLower(outputName.GetString());
-        if (outputNameLower == "st" || outputNameLower == "texcoord" || outputNameLower == "uv") {
+        if (outputNameLower == "st" || outputNameLower == "texcoord" ||
+            outputNameLower == "uv" || outputNameLower == "in" ||
+            outputNameLower == "coord") {
             Logger::debug(outputId, ": remapped image coord input ", outputName, " -> input_texture_coordinates");
             return "input_texture_coordinates";
+        }
+    }
+    if (output &&
+        output->getSceneClass().getName() == "UsdTransform2d") {
+        const std::string outputNameLower = toLower(outputName.GetString());
+        if (outputName == tOut || outputNameLower == "st" || outputNameLower == "texcoord" ||
+            outputNameLower == "uv" || outputNameLower == "coord") {
+            Logger::debug(outputId, ": remapped place2d input ", outputName, " -> in");
+            return "in";
         }
     }
     return outputName.GetString();
@@ -358,11 +491,20 @@ resolveOutputAttributeName(const scene_rdl2::rdl2::SceneObject* output,
 void
 configureImageMapTexcoordMode(scene_rdl2::rdl2::SceneObject* output,
                               const std::string& outputAttributeName,
-                              const pxr::SdfPath& outputId)
+                              const pxr::SdfPath& outputId,
+                              scene_rdl2::rdl2::SceneObject* input,
+                              const pxr::SdfPath& inputId)
 {
     if (!output || output->getSceneClass().getName() != "ImageMap" ||
         outputAttributeName != "input_texture_coordinates") {
         return;
+    }
+    if (input) {
+        Logger::debug(outputId, ": binding ImageMap.input_texture_coordinates <- ",
+                      inputId, " (", input->getSceneClass().getName(), ")");
+    } else {
+        Logger::debug(outputId, ": binding ImageMap.input_texture_coordinates <- ",
+                      inputId, " (input scene object missing)");
     }
     const scene_rdl2::rdl2::Attribute* textureCoordinatesAttr =
         output->getSceneClass().getAttribute("texture_coordinates");
@@ -643,6 +785,7 @@ makeMoonrayShader(
     const bool isMaterialXStandardSurface = isMaterialXStandardSurfaceIdentifier(node.identifier);
     const bool isMaterialXImageOrTiled = isMaterialXImageOrTiledIdentifier(node.identifier);
     const bool isMaterialXTexcoordLike = isMaterialXTexcoordLikeIdentifier(node.identifier);
+    const bool isMaterialXPlace2d = isMaterialXPlace2dIdentifier(node.identifier);
     const bool isImageLikeButNotAllowed =
         looksLikeImageIdentifier(node.identifier) &&
         !isMaterialXImageOrTiled &&
@@ -660,19 +803,48 @@ makeMoonrayShader(
     } else if (isMaterialXTexcoordLike) {
         className = "UsdPrimvarReader_float2";
         Logger::debug(node.path, ": bridged texcoord node '", node.identifier, "' -> UsdPrimvarReader_float2");
+    } else if (isMaterialXPlace2d) {
+        className = "UsdTransform2d";
+        Logger::debug(node.path, ": bridged place2d node '", node.identifier, "' -> UsdTransform2d");
     } else if (isImageLikeButNotAllowed) {
         Logger::debug(node.path, ": image-like node id not allowlisted: '", node.identifier, "'");
     }
 
     std::map<pxr::TfToken, pxr::VtValue> params(node.parameters.begin(), node.parameters.end());
     if (isMaterialXImageOrTiled) {
-        applyMaterialXImageMapping(params, node.path);
+        applyMaterialXImageMapping(node.identifier, params, node.path);
     }
     if (isMaterialXTexcoordLike) {
         applyMaterialXTexcoordLikeMapping(node, params);
     }
+    if (isMaterialXPlace2d) {
+        applyMaterialXPlace2dMapping(node, params);
+    }
     if (isMaterialXStandardSurface) {
         applyMaterialXStandardSurfaceMapping(node, params);
+    }
+
+    if (className == "ImageMap") {
+        debugLogSelectedParams(node.path, "ImageMap",
+                               params,
+                               {pxr::TfToken("file"), pxr::TfToken("texture"),
+                                pxr::TfToken("texcoord"), pxr::TfToken("uvtiling"),
+                                pxr::TfToken("uvoffset"), pxr::TfToken("scale"),
+                                pxr::TfToken("offset"), pxr::TfToken("wrap_around")});
+    } else if (className == "UsdTransform2d") {
+        debugLogSelectedParams(node.path, "UsdTransform2d",
+                               params,
+                               {pxr::TfToken("texcoord"), pxr::TfToken("in"),
+                                pxr::TfToken("scale"), pxr::TfToken("rotate"),
+                                pxr::TfToken("rotation"), pxr::TfToken("offset"),
+                                pxr::TfToken("translation"), pxr::TfToken("pivot"),
+                                pxr::TfToken("operationorder")});
+    } else if (className == "UsdPrimvarReader_float2") {
+        debugLogSelectedParams(node.path, "UsdPrimvarReader_float2",
+                               params,
+                               {pxr::TfToken("varname"), pxr::TfToken("geomprop"),
+                                pxr::TfToken("attribute"), pxr::TfToken("default"),
+                                pxr::TfToken("fallback")});
     }
 
     SceneObject* shaderObj = renderDelegate.createSceneObject(className, nodeName);
@@ -680,6 +852,15 @@ makeMoonrayShader(
         try {
             SceneObject::UpdateGuard guard(shaderObj);
             const SceneClass& sceneClass = shaderObj->getSceneClass();
+            bool isUsdTransform2dClass = (sceneClass.getName() == "UsdTransform2d");
+            const bool hasInParam = params.find(pxr::TfToken("in")) != params.end();
+            const bool hasScaleParam = params.find(pxr::TfToken("scale")) != params.end();
+            const bool hasTranslationParam = params.find(pxr::TfToken("translation")) != params.end();
+            const bool hasRotationParam = params.find(pxr::TfToken("rotation")) != params.end();
+            bool appliedIn = false;
+            bool appliedScale = false;
+            bool appliedTranslation = false;
+            bool appliedRotation = false;
             for (auto it = sceneClass.beginAttributes(); it != sceneClass.endAttributes(); ++it) {
                 const Attribute* attribute = *it;
                 const std::string& attrName = attribute->getName();
@@ -691,10 +872,28 @@ makeMoonrayShader(
                     auto valIt = params.find(pxr::TfToken(attrName));
                     if (valIt != params.end()) {
                         hdMoonray::ValueConverter::setAttribute(shaderObj, attribute, valIt->second);
+                        if (isUsdTransform2dClass) {
+                            if (attrName == "in") {
+                                appliedIn = true;
+                            } else if (attrName == "scale") {
+                                appliedScale = true;
+                            } else if (attrName == "translation") {
+                                appliedTranslation = true;
+                            } else if (attrName == "rotation") {
+                                appliedRotation = true;
+                            }
+                        }
                     } else {
                         hdMoonray::ValueConverter::setDefault(shaderObj, attribute);
                     }
                 }
+            }
+            if (isUsdTransform2dClass) {
+                Logger::debug(node.path, ": UsdTransform2d set status in(authored/applied)=",
+                              hasInParam ? "Y" : "N", "/", appliedIn ? "Y" : "N",
+                              " scale=", hasScaleParam ? "Y" : "N", "/", appliedScale ? "Y" : "N",
+                              " translation=", hasTranslationParam ? "Y" : "N", "/", appliedTranslation ? "Y" : "N",
+                              " rotation=", hasRotationParam ? "Y" : "N", "/", appliedRotation ? "Y" : "N");
             }
         } catch (const std::exception& e) {
             Logger::error(node.path, ": ", e.what());
@@ -781,8 +980,13 @@ Material::updateTerminal(pxr::TfToken terminalName,
     // connections so won't contain the material at the end
     // which has no output connections.
     std::unordered_map< std::string, std::set<std::string> > nodeChannelMap;
+    static const pxr::TfToken tOut("out");
     for (const pxr::HdMaterialRelationship& rel : network.relationships) {
-        const std::string inputChannel = rel.inputName.GetString();
+        const pxr::TfToken inputName = rel.inputName.IsEmpty() ? tOut : rel.inputName;
+        if (rel.inputName.IsEmpty()) {
+            Logger::debug(rel.inputId, ": relationship inputName is empty, normalizing to 'out'");
+        }
+        const std::string inputChannel = inputName.GetString();
 
         // Find the input node
         for (const pxr::HdMaterialNode& node : network.nodes) {
@@ -849,6 +1053,10 @@ Material::updateTerminal(pxr::TfToken terminalName,
 
     // set bindings (fixme: only works for Moonray shaders)
     for (const pxr::HdMaterialRelationship& rel : network.relationships) {
+        const pxr::TfToken relInputName = rel.inputName.IsEmpty() ? tOut : rel.inputName;
+        if (rel.inputName.IsEmpty()) {
+            Logger::debug(rel.inputId, ": relationship inputName is empty, normalizing to 'out'");
+        }
         // Input connection
         SceneObject* input;
 
@@ -860,7 +1068,7 @@ Material::updateTerminal(pxr::TfToken terminalName,
 
                 const std::string nodeWithChannel =
                     getNodeWithChannelName(moonrayInputName,
-                                           rel.inputName.GetString());
+                                           relInputName.GetString());
 
                 input = renderDelegate.getSceneObject(nodeWithChannel);
 
@@ -920,7 +1128,7 @@ Material::updateTerminal(pxr::TfToken terminalName,
                     input->getSceneClass().getAttribute("output_mode");
                 if (outputModeAttr &&
                     outputModeAttr->getType() == scene_rdl2::rdl2::TYPE_INT) {
-                    const std::string channel = rel.inputName.GetString();
+                    const std::string channel = relInputName.GetString();
                     const auto outputModeKey = input->getSceneClass().getAttributeKey<Int>("output_mode");
                     int enumValue = input->getSceneClass().getEnumValue(outputModeKey, channel);
                     input->set(outputModeKey, enumValue);
@@ -952,16 +1160,17 @@ Material::updateTerminal(pxr::TfToken terminalName,
                 try {
                     UpdateGuard guard(output);
                     const std::string outputAttributeName =
-                        resolveOutputAttributeName(output, rel.outputName, rel.outputId);
+                        resolveOutputAttributeName(output, rel.outputName, rel.outputId, input);
 
                     const scene_rdl2::rdl2::Attribute* attribute(
                         output->getSceneClass().getAttribute(outputAttributeName));
                     if (!attribute) {
-                        Logger::debug(rel.outputId, ": skipping connection to unknown output attribute '",
-                                      outputAttributeName, "' for scene class ", output->getSceneClass().getName());
+                        Logger::debug(rel.outputId, ": skipping connection: rel.outputName='",
+                                      rel.outputName, "' resolved='", outputAttributeName,
+                                      "' scene class=", output->getSceneClass().getName());
                         continue;
                     }
-                    configureImageMapTexcoordMode(output, outputAttributeName, rel.outputId);
+                    configureImageMapTexcoordMode(output, outputAttributeName, rel.outputId, input, rel.inputId);
 
                     if (attribute->getType() == scene_rdl2::rdl2::TYPE_SCENE_OBJECT) {
                         output->set(AttributeKey<SceneObject*>(*attribute), input);
@@ -982,16 +1191,17 @@ Material::updateTerminal(pxr::TfToken terminalName,
             try {
                 UpdateGuard guard(output);
                 const std::string outputAttributeName =
-                    resolveOutputAttributeName(output, rel.outputName, rel.outputId);
+                    resolveOutputAttributeName(output, rel.outputName, rel.outputId, input);
 
                 const scene_rdl2::rdl2::Attribute* attribute(
                     output->getSceneClass().getAttribute(outputAttributeName));
                 if (!attribute) {
-                    Logger::debug(rel.outputId, ": skipping connection to unknown output attribute '",
-                                  outputAttributeName, "' for scene class ", output->getSceneClass().getName());
+                    Logger::debug(rel.outputId, ": skipping connection: rel.outputName='",
+                                  rel.outputName, "' resolved='", outputAttributeName,
+                                  "' scene class=", output->getSceneClass().getName());
                     continue;
                 }
-                configureImageMapTexcoordMode(output, outputAttributeName, rel.outputId);
+                configureImageMapTexcoordMode(output, outputAttributeName, rel.outputId, input, rel.inputId);
 
                 if (attribute->getType() == scene_rdl2::rdl2::TYPE_SCENE_OBJECT) {
                     output->set(AttributeKey<SceneObject*>(*attribute), input);
