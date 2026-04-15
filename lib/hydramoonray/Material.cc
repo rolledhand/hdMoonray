@@ -25,6 +25,8 @@
 
 #include <scene_rdl2/render/logging/logging.h>
 #include <iostream>
+#include <algorithm>
+#include <cctype>
 
 using namespace scene_rdl2::rdl2;
 using namespace scene_rdl2::math;
@@ -40,6 +42,183 @@ using scene_rdl2::logging::Logger;
 
 const pxr::TfToken projectorToken("projector");
 const pxr::TfToken proj_camToken("proj_cam");
+const pxr::TfToken moonraySurfaceTerminalToken("moonray:surface");
+
+bool
+endsWith(const std::string& value, const std::string& suffix)
+{
+    return value.size() >= suffix.size() &&
+        value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+std::string
+toLower(std::string value)
+{
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return value;
+}
+
+bool
+getScalar(const pxr::VtValue& v, float& out)
+{
+    if (v.IsHolding<float>()) {
+        out = v.UncheckedGet<float>();
+        return true;
+    }
+    if (v.IsHolding<double>()) {
+        out = static_cast<float>(v.UncheckedGet<double>());
+        return true;
+    }
+    if (v.IsHolding<int>()) {
+        out = static_cast<float>(v.UncheckedGet<int>());
+        return true;
+    }
+    if (v.IsHolding<long>()) {
+        out = static_cast<float>(v.UncheckedGet<long>());
+        return true;
+    }
+    if (v.IsHolding<long long>()) {
+        out = static_cast<float>(v.UncheckedGet<long long>());
+        return true;
+    }
+    return false;
+}
+
+bool
+getRgb(const pxr::VtValue& v, pxr::GfVec3f& out)
+{
+    if (v.IsHolding<pxr::GfVec3f>()) {
+        out = v.UncheckedGet<pxr::GfVec3f>();
+        return true;
+    }
+    if (v.IsHolding<pxr::GfVec3d>()) {
+        auto d = v.UncheckedGet<pxr::GfVec3d>();
+        out = pxr::GfVec3f(static_cast<float>(d[0]), static_cast<float>(d[1]), static_cast<float>(d[2]));
+        return true;
+    }
+    if (v.IsHolding<pxr::GfVec4f>()) {
+        auto c = v.UncheckedGet<pxr::GfVec4f>();
+        out = pxr::GfVec3f(c[0], c[1], c[2]);
+        return true;
+    }
+    if (v.IsHolding<pxr::GfVec4d>()) {
+        auto c = v.UncheckedGet<pxr::GfVec4d>();
+        out = pxr::GfVec3f(static_cast<float>(c[0]), static_cast<float>(c[1]), static_cast<float>(c[2]));
+        return true;
+    }
+    float scalar;
+    if (getScalar(v, scalar)) {
+        out = pxr::GfVec3f(scalar);
+        return true;
+    }
+    return false;
+}
+
+void
+setIfPresent(std::map<pxr::TfToken, pxr::VtValue>& outParams,
+             const std::map<pxr::TfToken, pxr::VtValue>& inParams,
+             const pxr::TfToken& inToken,
+             const pxr::TfToken& outToken)
+{
+    auto it = inParams.find(inToken);
+    if (it != inParams.end()) {
+        outParams[outToken] = it->second;
+    }
+}
+
+void
+applyMaterialXStandardSurfaceMapping(const pxr::HdMaterialNode& node,
+                                     std::map<pxr::TfToken, pxr::VtValue>& params)
+{
+    static const pxr::TfToken tBaseColor("base_color");
+    static const pxr::TfToken tBase("base");
+    static const pxr::TfToken tSpecular("specular");
+    static const pxr::TfToken tSpecularRoughness("specular_roughness");
+    static const pxr::TfToken tMetalness("metalness");
+    static const pxr::TfToken tTransmission("transmission");
+    static const pxr::TfToken tOpacity("opacity");
+    static const pxr::TfToken tIor("ior");
+    static const pxr::TfToken tEmissionColor("emission_color");
+    static const pxr::TfToken tEmission("emission");
+
+    static const pxr::TfToken tAlbedo("albedo");
+    static const pxr::TfToken tRoughness("roughness");
+    static const pxr::TfToken tMetallic("metallic");
+    static const pxr::TfToken tPresence("presence");
+    static const pxr::TfToken tRefractiveIndex("refractive_index");
+
+    setIfPresent(params, node.parameters, tSpecular, tSpecular);
+    setIfPresent(params, node.parameters, tSpecularRoughness, tRoughness);
+    setIfPresent(params, node.parameters, tMetalness, tMetallic);
+    setIfPresent(params, node.parameters, tTransmission, tTransmission);
+    setIfPresent(params, node.parameters, tIor, tRefractiveIndex);
+
+    auto opacityIt = node.parameters.find(tOpacity);
+    if (opacityIt != node.parameters.end()) {
+        pxr::GfVec3f opacityRgb;
+        float opacityScalar = 1.0f;
+        if (getRgb(opacityIt->second, opacityRgb)) {
+            opacityScalar = (opacityRgb[0] + opacityRgb[1] + opacityRgb[2]) / 3.0f;
+            params[tPresence] = pxr::VtValue(opacityScalar);
+        }
+    }
+
+    pxr::GfVec3f baseColor(1.0f);
+    auto baseColorIt = node.parameters.find(tBaseColor);
+    bool hasBaseColor = baseColorIt != node.parameters.end() && getRgb(baseColorIt->second, baseColor);
+    if (hasBaseColor) {
+        float baseFactor = 1.0f;
+        auto baseIt = node.parameters.find(tBase);
+        if (baseIt != node.parameters.end()) {
+            float tmp;
+            if (getScalar(baseIt->second, tmp)) {
+                baseFactor = tmp;
+            }
+        }
+        params[tAlbedo] = pxr::VtValue(baseColor * baseFactor);
+    }
+
+    pxr::GfVec3f emissionColor(0.0f);
+    auto emissionColorIt = node.parameters.find(tEmissionColor);
+    bool hasEmissionColor = emissionColorIt != node.parameters.end() && getRgb(emissionColorIt->second, emissionColor);
+    if (hasEmissionColor) {
+        float emissionFactor = 1.0f;
+        auto emissionIt = node.parameters.find(tEmission);
+        if (emissionIt != node.parameters.end()) {
+            float tmp;
+            if (getScalar(emissionIt->second, tmp)) {
+                emissionFactor = tmp;
+            }
+        }
+        params[tEmission] = pxr::VtValue(emissionColor * emissionFactor);
+    }
+}
+
+pxr::TfToken
+resolveSurfaceTerminal(const pxr::HdMaterialNetworkMap& networkmap,
+                       const pxr::TfToken& requestedTerminal)
+{
+    if (requestedTerminal != pxr::HdMaterialTerminalTokens->surface) {
+        return requestedTerminal;
+    }
+    if (networkmap.map.find(requestedTerminal) != networkmap.map.end()) {
+        return requestedTerminal;
+    }
+    if (networkmap.map.find(moonraySurfaceTerminalToken) != networkmap.map.end()) {
+        Logger::info("hdMoonray material terminal fallback: using 'moonray:surface'");
+        return moonraySurfaceTerminalToken;
+    }
+    for (const auto& entry : networkmap.map) {
+        const std::string terminal = entry.first.GetString();
+        if (endsWith(terminal, ":surface")) {
+            Logger::info("hdMoonray material terminal fallback: using '", terminal, "'");
+            return entry.first;
+        }
+    }
+    return requestedTerminal;
+}
 
 UNUSED
 void
@@ -142,7 +321,24 @@ makeMoonrayShader(
     const std::string& nodeName,
     const pxr::HdRprim* geom
 ) {
-    SceneObject* shaderObj = renderDelegate.createSceneObject(node.identifier.GetString(), nodeName);
+    std::string className = node.identifier.GetString();
+    const std::string identifierLower = toLower(className);
+    const bool isMaterialXStandardSurface = identifierLower.find("standard_surface") != std::string::npos;
+
+    if (className == "BaseMaterial") {
+        className = "DwaBaseMaterial";
+        Logger::info(node.path, ": aliased BaseMaterial -> DwaBaseMaterial");
+    } else if (isMaterialXStandardSurface) {
+        className = "DwaBaseMaterial";
+        Logger::info(node.path, ": bridged MaterialX standard_surface -> DwaBaseMaterial");
+    }
+
+    std::map<pxr::TfToken, pxr::VtValue> params(node.parameters.begin(), node.parameters.end());
+    if (isMaterialXStandardSurface) {
+        applyMaterialXStandardSurfaceMapping(node, params);
+    }
+
+    SceneObject* shaderObj = renderDelegate.createSceneObject(className, nodeName);
     if (shaderObj) {
         try {
             SceneObject::UpdateGuard guard(shaderObj);
@@ -155,8 +351,8 @@ makeMoonrayShader(
                         renderDelegate, sceneDelegate, node, pxr::TfToken(attrName), geom);
                     shaderObj->set(AttributeKey<SceneObject*>(*attribute), binding);
                 } else {
-                    auto valIt = node.parameters.find(pxr::TfToken(attrName));
-                    if (valIt != node.parameters.end()) {
+                    auto valIt = params.find(pxr::TfToken(attrName));
+                    if (valIt != params.end()) {
                         hdMoonray::ValueConverter::setAttribute(shaderObj, attribute, valIt->second);
                     } else {
                         hdMoonray::ValueConverter::setDefault(shaderObj, attribute);
@@ -230,6 +426,7 @@ Material::updateTerminal(pxr::TfToken terminalName,
     }
 
     const pxr::HdMaterialNetworkMap& networkmap = mResource.UncheckedGet<pxr::HdMaterialNetworkMap>();
+    terminalName = resolveSurfaceTerminal(networkmap, terminalName);
     auto i = networkmap.map.find(terminalName);
     if (i == networkmap.map.end()) {
         return nullptr;
@@ -531,4 +728,3 @@ Material::get(
 }
 
 }
-
