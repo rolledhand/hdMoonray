@@ -189,7 +189,7 @@ LightFilter::syncTextureMap(const pxr::SdfPath& id,
                 continue;
             }
             const std::string nodeName = node.path.GetString();
-            shader = makeMoonrayShader(renderDelegate, sceneDelegate, node, nodeName, nullptr);
+            shader = makeMoonrayShader(renderDelegate, sceneDelegate, node, nodeName, "", nullptr);
             if (!shader) {
                 continue;
             }
@@ -284,4 +284,3 @@ LightFilter::getFilter(pxr::HdSceneDelegate* sceneDelegate,
 }
 
 }
-

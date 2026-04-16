@@ -424,14 +424,10 @@ applyMaterialXImageMapping(const pxr::TfToken& identifier,
                            const pxr::SdfPath& nodePath,
                            MappingStats& stats)
 {
+    (void)identifier;
     static const pxr::TfToken tTexture("texture");
     static const pxr::TfToken tFile("file");
     static const pxr::TfToken tDefault("default");
-    static const pxr::TfToken tDefaultColor("default_color");
-    static const pxr::TfToken tUseDefaultColorWhenMissing("use_default_color_when_missing");
-    static const pxr::TfToken tTexcoord("texcoord");
-    static const pxr::TfToken tInputTextureCoordinates("input_texture_coordinates");
-    static const pxr::TfToken tTextureCoordinates("texture_coordinates");
     static const pxr::TfToken tUvTiling("uvtiling");
     static const pxr::TfToken tUvOffset("uvoffset");
     static const pxr::TfToken tScale("scale");
@@ -450,54 +446,26 @@ applyMaterialXImageMapping(const pxr::TfToken& identifier,
         }
     }
 
-    if (params.find(tDefaultColor) == params.end()) {
-        auto defaultIt = params.find(tDefault);
-        if (defaultIt != params.end()) {
-            pxr::GfVec3f defaultRgb(0.0f);
-            if (getRgb(defaultIt->second, defaultRgb)) {
-                params[tDefaultColor] = pxr::VtValue(defaultRgb);
-                params[tUseDefaultColorWhenMissing] = pxr::VtValue(true);
-                ++stats.approximate;
-                warnMaterialXLossyOnce(
-                    nodePath,
-                    "image:default",
-                    "MaterialX 'default' mapped approximately to ImageMap default_color/use_default_color_when_missing");
-            }
-        }
+    if (params.find(tDefault) != params.end()) {
+        ++stats.unsupported;
+        warnMaterialXLossyOnce(nodePath, "image:default",
+                               "MaterialX default/fallback color is currently unsupported in native ImageMap bridge");
     }
 
-    if (params.find(tInputTextureCoordinates) == params.end()) {
-        auto texcoordIt = params.find(tTexcoord);
-        if (texcoordIt != params.end()) {
-            pxr::GfVec2f st(0.0f, 0.0f);
-            if (getVec2f(texcoordIt->second, st)) {
-                params[tInputTextureCoordinates] = pxr::VtValue(pxr::GfVec3f(st[0], st[1], 0.0f));
-                params[tTextureCoordinates] = pxr::VtValue(2);
-                ++stats.approximate;
-                warnMaterialXLossyOnce(
-                    nodePath,
-                    "image:texcoord",
-                    "MaterialX texcoord literal mapped to ImageMap input_texture_coordinates");
-            }
+    if (params.find(tScale) == params.end()) {
+        auto tilingIt = params.find(tUvTiling);
+        if (tilingIt != params.end()) {
+            params[tScale] = tilingIt->second;
+            Logger::debug(nodePath, ": bridged image parameter uvtiling -> scale");
+            ++stats.exact;
         }
     }
-
-    if (isMaterialXTiledImageIdentifier(identifier)) {
-        if (params.find(tScale) == params.end()) {
-            auto tilingIt = params.find(tUvTiling);
-            if (tilingIt != params.end()) {
-                params[tScale] = tilingIt->second;
-                Logger::debug(nodePath, ": bridged tiledimage parameter uvtiling -> scale");
-                ++stats.exact;
-            }
-        }
-        if (params.find(tOffset) == params.end()) {
-            auto offsetIt = params.find(tUvOffset);
-            if (offsetIt != params.end()) {
-                params[tOffset] = offsetIt->second;
-                Logger::debug(nodePath, ": bridged tiledimage parameter uvoffset -> offset");
-                ++stats.exact;
-            }
+    if (params.find(tOffset) == params.end()) {
+        auto offsetIt = params.find(tUvOffset);
+        if (offsetIt != params.end()) {
+            params[tOffset] = offsetIt->second;
+            Logger::debug(nodePath, ": bridged image parameter uvoffset -> offset");
+            ++stats.exact;
         }
     }
 

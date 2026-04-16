@@ -82,5 +82,6 @@ makeMoonrayShader(
     pxr::HdSceneDelegate*,
     const pxr::HdMaterialNode&,
     const std::string& nodeName,
+    const std::string& requestedOutputChannel,
     const pxr::HdRprim*
 );
