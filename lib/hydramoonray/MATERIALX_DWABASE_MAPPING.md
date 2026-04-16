@@ -1,6 +1,15 @@
 # MaterialX To DwaBase Mapping (HdMoonray)
 
-This translator is implemented as three independent layers:
+Native Moonray authoring is the primary, supported path. The MaterialX
+translation described here is a narrowed compatibility shim for scenes that
+land in a MaterialX subnet by default (e.g. Houdini Solaris' stock material
+network). The delegate advertises Moonray render contexts
+(`GetMaterialRenderContexts`/`GetShaderSourceTypes` in `RenderDelegate.cc`),
+so Houdini's Material Library LOP surfaces all Sdr-registered Moonray
+shaders directly; those are authored with `info:id` equal to the bare Rdl2
+class name and routed by the native-first branch in `makeMoonrayShader`.
+
+The MaterialX shim is implemented as three independent layers:
 - Layer 1: `standard_surface -> DwaBaseMaterial` parameter mapping
 - Layer 2: `mtlximage/mtlxtiledimage -> ImageMap` native mapping
 - Layer 3: UV transform policy (`UsdTransform2d`/`UVTransformMap`) kept separate

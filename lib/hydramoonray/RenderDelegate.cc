@@ -201,6 +201,31 @@ RenderDelegate::GetResourceRegistry() const
     return ptr;
 }
 
+pxr::TfTokenVector
+RenderDelegate::GetMaterialRenderContexts() const
+{
+    // "moonray"       : matches GetMaterialNetworkSelector() and the
+    //                   outputs:moonray:surface terminal namespace.
+    // "moonrayClass"  : matches the Sdr sourceType used by
+    //                   moonrayShaderParser, so Houdini's Material Library
+    //                   LOP shows all Moonray-discovered shaders under the
+    //                   Moonray render context.
+    static const pxr::TfTokenVector CONTEXTS = {
+        pxr::TfToken("moonray"),
+        pxr::TfToken("moonrayClass"),
+    };
+    return CONTEXTS;
+}
+
+pxr::TfTokenVector
+RenderDelegate::GetShaderSourceTypes() const
+{
+    static const pxr::TfTokenVector SOURCE_TYPES = {
+        pxr::TfToken("moonrayClass"),
+    };
+    return SOURCE_TYPES;
+}
+
 // Result of this is passed to RenderBuffer::Allocate
 pxr::HdAovDescriptor
 RenderDelegate::GetDefaultAovDescriptor(pxr::TfToken const& name) const

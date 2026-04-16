@@ -29,6 +29,7 @@
 #include <array>
 #include <cctype>
 #include <cstdlib>
+#include <cstring>
 #include <unordered_set>
 #include <vector>
 
@@ -129,24 +130,6 @@ isMaterialXPrimvarUtilityIdentifier(const pxr::TfToken& identifier)
            idLower.find("geomprop") != std::string::npos;
 }
 
-bool
-looksLikeImageIdentifier(const pxr::TfToken& identifier)
-{
-    const std::string idLower = toLower(identifier.GetString());
-    return idLower.find("image") != std::string::npos ||
-           idLower.find("uvtexture") != std::string::npos;
-}
-
-bool
-looksLikeUnsupportedMaterialXUtilityIdentifier(const pxr::TfToken& identifier)
-{
-    const std::string idLower = toLower(identifier.GetString());
-    return idLower.find("texcoord") != std::string::npos ||
-           idLower.find("geomprop") != std::string::npos ||
-           idLower.find("place2d") != std::string::npos ||
-           idLower.find("transform2d") != std::string::npos;
-}
-
 enum class MappingQuality
 {
     Exact,
@@ -243,36 +226,38 @@ getStandardSurfaceMappingRules()
     return kRules;
 }
 
-bool
-isNativeMoonrayTextureMaterialIdentifier(const pxr::TfToken& identifier)
-{
-    const std::string id = identifier.GetString();
-    return id == "DwaBaseMaterial" || id == "ImageMap";
-}
-
+// Strip common Moonray namespace prefixes that hosts may attach to a shader
+// identifier. Sdr-registered Moonray shaders are keyed by their bare Rdl2
+// class name (e.g. "DwaBaseMaterial", "ImageMap", "NoiseMap"), but some
+// authoring paths prepend a namespace. Returns the bare class name.
 std::string
-normalizeNativeTextureMaterialClassName(const pxr::TfToken& identifier)
+normalizeMoonrayClassName(const pxr::TfToken& identifier)
 {
-    const std::string raw = identifier.GetString();
-    const std::string lower = toLower(raw);
-
-    auto matchAny = [&lower](const std::initializer_list<const char*>& names) {
-        for (const char* name : names) {
-            if (lower == name) {
-                return true;
-            }
+    std::string raw = identifier.GetString();
+    static const std::array<const char*, 4> kPrefixes = {{
+        "moonray:", "moonray_", "Moonray:", "Moonray_"
+    }};
+    for (const char* p : kPrefixes) {
+        const std::size_t plen = std::strlen(p);
+        if (raw.size() >= plen && raw.compare(0, plen, p) == 0) {
+            raw.erase(0, plen);
+            break;
         }
-        return false;
-    };
-
-    if (matchAny({"dwabasematerial", "moonray:dwabasematerial", "moonray_dwabasematerial",
-                  "moonraydwabasematerial"})) {
-        return "DwaBaseMaterial";
-    }
-    if (matchAny({"imagemap", "moonray:imagemap", "moonray_imagemap", "moonrayimagemap"})) {
-        return "ImageMap";
     }
     return raw;
+}
+
+// Detect any identifier we know to be authored via the MaterialX/UsdShade
+// utility bridges, rather than a native Moonray Rdl2 class. This gates the
+// legacy MaterialX translation layer so it never shadows native authoring.
+bool
+isMaterialXBridgedIdentifier(const pxr::TfToken& identifier)
+{
+    return isMaterialXStandardSurfaceIdentifier(identifier) ||
+           isMaterialXImageOrTiledIdentifier(identifier) ||
+           isUsdTransform2dIdentifier(identifier) ||
+           isMaterialXPrimvarUtilityIdentifier(identifier) ||
+           isUsdUVTextureIdentifier(identifier);
 }
 
 bool
@@ -994,23 +979,21 @@ makeMoonrayShader(
     const std::string& requestedOutputChannel,
     const pxr::HdRprim* geom
 ) {
-    std::string className = normalizeNativeTextureMaterialClassName(node.identifier);
-    const bool isNativeTextureMaterial = (className == "DwaBaseMaterial" || className == "ImageMap");
+    // Native-first routing. Sdr registers all Moonray Rdl2 classes under their
+    // bare class name with sourceType="moonrayClass"; once the render delegate
+    // advertises the Moonray render context, Houdini authors UsdShade.Shader
+    // prims with info:id equal to those bare names. Strip known host prefixes
+    // then treat anything that is not an explicit MaterialX/UsdShade utility
+    // identifier as a native class — createSceneObject will lazy-load the DSO
+    // or return nullptr if there really is no such class.
+    std::string className = normalizeMoonrayClassName(node.identifier);
     const bool isMaterialXStandardSurface = isMaterialXStandardSurfaceIdentifier(node.identifier);
     const bool isMaterialXImageOrTiled = isMaterialXImageOrTiledIdentifier(node.identifier);
     const bool isMaterialXTransform2d = isUsdTransform2dIdentifier(node.identifier);
     const bool isMaterialXPrimvarUtility = isMaterialXPrimvarUtilityIdentifier(node.identifier);
-    const bool isUnsupportedMaterialXUtility =
-        looksLikeUnsupportedMaterialXUtilityIdentifier(node.identifier);
-    const bool isImageLikeButNotAllowed =
-        looksLikeImageIdentifier(node.identifier) &&
-        !isMaterialXImageOrTiled &&
-        !isUsdUVTextureIdentifier(node.identifier);
+    const bool isMaterialXBridged = isMaterialXBridgedIdentifier(node.identifier);
 
-    if (isNativeTextureMaterial) {
-        Logger::debug(node.path, ": native Moonray node passthrough id='", node.identifier,
-                      "' class='", className, "'");
-    } else if (className == "BaseMaterial") {
+    if (className == "BaseMaterial") {
         className = "DwaBaseMaterial";
         Logger::info(node.path, ": aliased BaseMaterial -> DwaBaseMaterial");
     } else if (isMaterialXStandardSurface) {
@@ -1025,15 +1008,14 @@ makeMoonrayShader(
     } else if (isMaterialXPrimvarUtility) {
         className = "UsdPrimvarReader_float2";
         Logger::debug(node.path, ": bridged primvar utility node '", node.identifier, "' -> UsdPrimvarReader_float2");
-    } else if (isUnsupportedMaterialXUtility) {
-        Logger::debug(node.path, ": unsupported MaterialX utility node id '",
-                      node.identifier, "' (native ImageMap-only bridge)");
-    } else if (isImageLikeButNotAllowed) {
-        Logger::debug(node.path, ": image-like node id not allowlisted: '", node.identifier, "'");
+    } else {
+        Logger::debug(node.path, ": native Moonray node passthrough id='", node.identifier,
+                      "' class='", className, "'");
     }
     if (shouldTraceNativePath()) {
         Logger::info("hdMoonray native trace node: path='", node.path,
-                     "' id='", node.identifier, "' resolvedClass='", className, "'");
+                     "' id='", node.identifier, "' resolvedClass='", className,
+                     "' bridged=", (isMaterialXBridged ? "Y" : "N"));
     }
 
     std::map<pxr::TfToken, pxr::VtValue> params(node.parameters.begin(), node.parameters.end());

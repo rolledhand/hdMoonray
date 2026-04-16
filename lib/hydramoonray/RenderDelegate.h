@@ -179,6 +179,17 @@ public:
     pxr::TfToken GetMaterialNetworkSelector() const override
         { static pxr::TfToken tt("moonray"); return tt; }
 
+    /// The render contexts this delegate advertises to Hydra / Houdini. Houdini's
+    /// Material Library LOP uses this to populate its shader-picker: any Sdr entry
+    /// whose sourceType matches one of these tokens becomes visible under the
+    /// Moonray render context. We advertise both "moonray" (the terminal namespace)
+    /// and "moonrayClass" (the Sdr sourceType used by moonrayShaderParser).
+    pxr::TfTokenVector GetMaterialRenderContexts() const override;
+
+    /// Older-USD counterpart to GetMaterialRenderContexts(), used by some host
+    /// applications to filter Sdr entries.
+    pxr::TfTokenVector GetShaderSourceTypes() const override;
+
     /// This function returns the default AOV descriptor for a given named AOV.
     /// This mechanism lets the renderer decide things like what format
     /// a given AOV will be written as.
