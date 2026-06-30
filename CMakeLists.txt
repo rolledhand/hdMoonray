@@ -42,21 +42,60 @@ find_package(OpenGL REQUIRED)
 find_package(JPEG REQUIRED)
 find_package(OpenImageIO REQUIRED)
 
+set(HDMOONRAY_PXR_PYTHON_TARGET "")
+set(_hdMoonrayPxrLibPrefixes "")
+if (DEFINED PXR_LIB_PREFIX)
+    list(APPEND _hdMoonrayPxrLibPrefixes "${PXR_LIB_PREFIX}")
+endif()
+if (DEFINED ENV{PXR_LIB_PREFIX})
+    list(APPEND _hdMoonrayPxrLibPrefixes "$ENV{PXR_LIB_PREFIX}")
+endif()
+foreach(_pxrLibPrefix IN LISTS _hdMoonrayPxrLibPrefixes)
+    if (NOT HDMOONRAY_PXR_PYTHON_TARGET AND
+        EXISTS "${_pxrLibPrefix}/libpxr_python.dylib")
+        add_library(HdMoonrayPxrPython SHARED IMPORTED GLOBAL)
+        set_target_properties(HdMoonrayPxrPython PROPERTIES
+            IMPORTED_LOCATION "${_pxrLibPrefix}/libpxr_python.dylib")
+        set(HDMOONRAY_PXR_PYTHON_TARGET HdMoonrayPxrPython)
+        message(STATUS "hdMoonray: using PXR Python library: ${_pxrLibPrefix}/libpxr_python.dylib")
+    endif()
+endforeach()
+
 set(HDMOONRAY_HOUDINI_OCIO_TARGET "")
 set(HDMOONRAY_HOUDINI_OCIO_INCLUDE_DIR "")
+set(HDMOONRAY_HOUDINI_LIBRARY_DIR "")
 set(HDMOONRAY_HOUDINI_INSTALL_DIR "$ENV{HOUDINI_INSTALL_DIR}" CACHE PATH
     "Houdini install root used to locate SideFX OpenColorIO for Houdini-facing hdMoonray")
 if (APPLE AND HDMOONRAY_HOUDINI_INSTALL_DIR STREQUAL "")
-    set(HDMOONRAY_HOUDINI_INSTALL_DIR "/Applications/Houdini/Houdini20.5.584")
+    set(HDMOONRAY_HOUDINI_INSTALL_DIR "/Applications/Houdini/Houdini21.0.729")
 endif()
 
 if (APPLE AND HDMOONRAY_HOUDINI_INSTALL_DIR)
     set(_houdiniFrameworkRoot
         "${HDMOONRAY_HOUDINI_INSTALL_DIR}/Frameworks/Houdini.framework/Versions/Current")
+    set(HDMOONRAY_HOUDINI_LIBRARY_DIR
+        "${_houdiniFrameworkRoot}/Libraries")
     set(_houdiniOcioInclude
         "${_houdiniFrameworkRoot}/Resources/toolkit/include")
-    set(_houdiniOcioLibrary
+    set(_houdiniOcioLibrary "")
+    set(_houdiniOcioCandidates
+        "${_houdiniFrameworkRoot}/Libraries/libOpenColorIO_sidefx.dylib"
+        "${_houdiniFrameworkRoot}/Libraries/libOpenColorIO_sidefx.2.4.1.dylib"
         "${_houdiniFrameworkRoot}/Libraries/libOpenColorIO_sidefx.2.3.0.dylib")
+    foreach(_candidate IN LISTS _houdiniOcioCandidates)
+        if (NOT _houdiniOcioLibrary AND EXISTS "${_candidate}")
+            set(_houdiniOcioLibrary "${_candidate}")
+        endif()
+    endforeach()
+    if (NOT _houdiniOcioLibrary)
+        file(GLOB _houdiniOcioGlob
+            "${_houdiniFrameworkRoot}/Libraries/libOpenColorIO_sidefx*.dylib")
+        if (_houdiniOcioGlob)
+            list(SORT _houdiniOcioGlob)
+            list(REVERSE _houdiniOcioGlob)
+            list(GET _houdiniOcioGlob 0 _houdiniOcioLibrary)
+        endif()
+    endif()
 
     if (EXISTS "${_houdiniOcioInclude}/OpenColorIO/OpenColorIO.h" AND
         EXISTS "${_houdiniOcioLibrary}")
@@ -80,13 +119,8 @@ endif()
 # so we need to pull the in explicitly
 find_package(TBB REQUIRED)
 
-if (NOT DEFINED BOOST_PYTHON_COMPONENT_NAME)
-    # may need to be, e.g. python36, python311
-    set(BOOST_PYTHON_COMPONENT_NAME python)
-endif()
-
 set(BUILD_SHARED_LIBS ON)
-find_package(Boost REQUIRED COMPONENTS "${BOOST_PYTHON_COMPONENT_NAME}")
+find_package(Boost REQUIRED)
 
 if("${PROJECT_NAME}" STREQUAL "${CMAKE_PROJECT_NAME}")
     find_package(ArrasCore REQUIRED)
@@ -96,7 +130,6 @@ if("${PROJECT_NAME}" STREQUAL "${CMAKE_PROJECT_NAME}")
     find_package(SceneRdl2 REQUIRED)
 endif()
 
-# Set the RPATH for binaries in the install tree
 set(CMAKE_INSTALL_RPATH ${GLOBAL_INSTALL_RPATH})
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 

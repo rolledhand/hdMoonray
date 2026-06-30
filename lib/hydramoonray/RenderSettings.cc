@@ -6,12 +6,6 @@
 #include "ValueConverter.h"
 #include "Utils.h"
 
-// Houdini 20.5 USD 24.03's stock SdfChildrenProxy header does not compile in
-// this Xcode/AppleClang build. RenderDelegate.cc and RenderPass.cc use the
-// same local compatibility header through CMake include flags; include it
-// directly here because this source also needs UsdStage for metersPerUnit.
-#include "../../plugin/adapters/compat/houdini20_5_usd24_xcode26/pxr/usd/sdf/childrenProxy.h"
-
 #include <pxr/usd/sdf/assetPath.h>
 #include <pxr/usd/usd/stage.h>
 #include <pxr/usd/usdGeom/metrics.h>

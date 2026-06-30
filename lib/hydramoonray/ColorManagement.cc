@@ -3,7 +3,11 @@
 
 #include "ColorManagement.h"
 
+#ifdef HDMOONRAY_HOUDINI_OCIO_HEADER
+#include HDMOONRAY_HOUDINI_OCIO_HEADER
+#else
 #include <OpenColorIO/OpenColorIO.h>
+#endif
 
 #include <scene_rdl2/render/logging/logging.h>
 

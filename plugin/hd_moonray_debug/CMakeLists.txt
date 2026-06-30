@@ -85,5 +85,3 @@ install(TARGETS ${component}
 INSTALL(FILES ${plugInfoFile}
     DESTINATION plugin/pxr/${component}
 )
-
-
