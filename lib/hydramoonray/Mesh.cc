@@ -332,6 +332,8 @@ Mesh::primvarChanged(HdSceneDelegate *sceneDelegate, RenderDelegate& renderDeleg
 
     static const TfToken stToken("st");
     static const TfToken uvToken("uv");
+    static const TfToken primvarsStToken("primvars:st");
+    static const TfToken primvarsUvToken("primvars:uv");
     static const TfToken normalToken("normal");
 
     if (name == HdTokens->normals || name == normalToken) {
@@ -348,13 +350,19 @@ Mesh::primvarChanged(HdSceneDelegate *sceneDelegate, RenderDelegate& renderDeleg
             Vec3fVector out(p, p + v.size());
             geometry()->set(rdlAttrNormalList, out);
         } 
-    } else if (name == stToken || name == uvToken) {
+    } else if (name == stToken || name == uvToken ||
+               name == primvarsStToken || name == primvarsUvToken) {
         if (value.IsEmpty()) {
             geometry()->resetToDefault(rdlAttrUvList);
         } else {
             Vec2fVector out;
             if (value.IsHolding<VtVec3fArray>()) {
                 const VtVec3fArray& v = value.UncheckedGet<VtVec3fArray>();
+                if (v.empty()) {
+                    Logger::warn("Skipping empty mesh texture-coordinate primvar '", name, "' on ", GetId());
+                    geometry()->resetToDefault(rdlAttrUvList);
+                    return;
+                }
                 out.reserve(v.size());
                 for (const auto& v3 : v) {
                     out.emplace_back(*reinterpret_cast<const Vec2f*>(&v3));
@@ -368,6 +376,11 @@ Mesh::primvarChanged(HdSceneDelegate *sceneDelegate, RenderDelegate& renderDeleg
                 }
                 const Vec2f* p = reinterpret_cast<const Vec2f*>(&v[0]);
                 out.assign(p, p + v.size());
+            }
+            if (out.empty()) {
+                Logger::warn("Unsupported mesh texture-coordinate primvar type for '", name, "' on ", GetId());
+                geometry()->resetToDefault(rdlAttrUvList);
+                return;
             }
             geometry()->set(rdlAttrUvList, std::move(out));
         }
