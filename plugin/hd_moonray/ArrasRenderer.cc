@@ -316,7 +316,10 @@ ArrasRenderer::resolve(MoonrayOutput output, PixelData& pd, bool forceUpdate)
 
     // see if no change since last time
     unsigned n = mFbReceiver->getFbActivityCounter();
-    if (!forceUpdate && n == pd.filmActivity) return false;
+    // A delta render can reset/reuse the framebuffer activity counter.  While
+    // the latest update is still rendering, do not suppress the resolve just
+    // because the counter happens to match the previous frame.
+    if (!forceUpdate && mFrameComplete && n == pd.filmActivity) return false;
     pd.filmActivity = n;
 
     if (output.isBeauty()) {
