@@ -401,7 +401,10 @@ ArrasRenderer::endUpdate()
             }
         }
         mSendEmptyUpdate = false;
-        rdlMsg->mForceReload = false;
+        // A complete scene payload must force MCRT to reload its render
+        // context.  Without this flag MCRT treats the payload as a delta and
+        // can acknowledge it without producing a new frame.
+        rdlMsg->mForceReload = true;
 
         // Set the frame id (aka sync id) so that we can tell when we
         // start receiving frames associated with this update
