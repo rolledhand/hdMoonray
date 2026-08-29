@@ -359,6 +359,12 @@ ArrasRenderer::getElapsedSeconds() const
 void
 ArrasRenderer::beginUpdate()
 {
+    std::lock_guard<std::mutex> guard(mMutex);
+    if (!mUpdateActive && mConnected && mSDK && mSDK->isEngineReady()) {
+        // Match the in-process renderer lifecycle: stop the current frame
+        // before applying a new Hydra scene update.
+        mSDK->pause();
+    }
     mUpdateActive = true;
 }
 
@@ -413,6 +419,9 @@ ArrasRenderer::endUpdate()
         // Send the render data to the computation
         try {
             mSDK->sendMessage(rdlMsg);
+            // Resume rendering only after the new scene payload has been
+            // queued, so MCRT starts the next frame from the updated scene.
+            mSDK->resume();
         } catch (std::exception& ex) {
             Logger::error("RDL message send failed: ",ex.what());
             hdmLogArras("sendUpdateFailed");
