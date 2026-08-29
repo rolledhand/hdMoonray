@@ -13,6 +13,7 @@
 #include <mcrt_messages/RenderMessages.h>
 
 #include <iostream>
+#include <sstream>
 
 namespace hdMoonray {
 
@@ -175,6 +176,16 @@ ArrasRenderer::messageHandler(const arras4::api::Message& msg)
                       " numBuffers=", frameMsg->mHeader.mNumBuffers);
 
         mFbReceiver->decodeProgressiveFrame(*frameMsg, true, [&]() {} /*no-op callback*/);
+
+        {
+            std::ostringstream log;
+            log << "recvFrame syncId=" << mFbReceiver->getFrameId()
+                << " latestSyncId=" << mLatestUpdateFrameId
+                << " status=" << static_cast<int>(mFbReceiver->getStatus())
+                << " buffers=" << frameMsg->mHeader.mNumBuffers
+                << " activity=" << mFbReceiver->getFbActivityCounter();
+            hdmLogArras(log.str());
+        }
 
         // update progress. This may be -1.0 if mFbReceiver has received no images at all.
         // After the first received image, it should remain >= 0.0
@@ -400,6 +411,15 @@ ArrasRenderer::endUpdate()
         // Set the frame id (aka sync id) so that we can tell when we
         // start receiving frames associated with this update
         rdlMsg->mSyncId = ++mLatestUpdateFrameId;
+
+        {
+            std::ostringstream log;
+            log << "sendUpdateData syncId=" << rdlMsg->mSyncId
+                << " delta=" << mFirstMessageSent
+                << " manifestBytes=" << rdlMsg->mManifest.size()
+                << " payloadBytes=" << rdlMsg->mPayload.size();
+            hdmLogArras(log.str());
+        }
 
         // Send the render data to the computation
         try {
