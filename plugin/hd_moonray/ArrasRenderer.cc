@@ -381,9 +381,12 @@ ArrasRenderer::endUpdate()
 
         // send any changes in the scene context as an RDLMessage
         scene_rdl2::rdl2::BinaryWriter writer(*mSceneContext);
-        // first message to a session sends complete scene, subsequent messages
-        // send only a delta relative to the last update
-        writer.setDeltaEncoding(mFirstMessageSent);
+        // Houdini 22's Hydra 2 update lifecycle can reuse scene-change state
+        // across Arras frames.  Delta encoding then produces a message which
+        // is acknowledged by the client but not applied by MCRT.  Send a
+        // complete scene for interactive Houdini updates until the H22 delta
+        // protocol is fixed; correctness is more important than bandwidth.
+        writer.setDeltaEncoding(false);
 
         // write our data to RDLB and put it in an RDLMessage.
         mcrt::RDLMessage::Ptr rdlMsg = std::make_shared<mcrt::RDLMessage>();
