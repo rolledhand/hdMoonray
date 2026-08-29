@@ -188,9 +188,8 @@ Policy:
 - `auto`: use the active OCIO config file rules for the texture filename;
 - `raw`, `data`, or `none`: bypass OCIO source conversion;
 - any other string: treat as an explicit OCIO color-space name, role, or alias;
-- when OCIO source conversion is active, legacy `gamma` is bypassed;
-- if OCIO is unavailable, missing, or the source cannot resolve, legacy gamma
-  behavior remains the fallback.
+- if OCIO is unavailable, missing, or the source cannot resolve, conversion is
+  disabled with a warning rather than falling back to 8-bit gamma decoding.
 
 `UsdUVTexture` keeps the USD-compatible enum:
 

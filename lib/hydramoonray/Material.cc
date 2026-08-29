@@ -84,6 +84,23 @@ isTerminalNode(const pxr::HdMaterialNetwork& network, const pxr::SdfPath& nodePa
 }
 
 bool
+isDataTextureInput(const pxr::TfToken& inputName)
+{
+    // USD texture nodes expose color and scalar outputs through the same map
+    // class.  A scalar material input is data even when the underlying image
+    // happens to be stored as an RGB greyscale texture.  Creating one map per
+    // connected output channel lets a texture shared by baseColor and
+    // roughness retain color conversion on the former while preserving the
+    // latter exactly.
+    static const std::unordered_set<std::string> dataInputs = {
+        "metallic", "roughness", "clearcoat", "clearcoatRoughness",
+        "opacity", "opacityThreshold", "occlusion", "displacement",
+        "height", "mask", "alpha", "anisotropy", "anisotropyRotation"
+    };
+    return dataInputs.count(inputName.GetString()) != 0;
+}
+
+bool
 isNoOpNormalDisplacementTerminal(const pxr::HdMaterialNetwork& network)
 {
     static const pxr::TfToken normalDisplacementToken("NormalDisplacement");
@@ -444,7 +461,7 @@ Material::updateTerminal(pxr::TfToken terminalName,
         }
 
         // UsdUVTexture map special handling
-        if (std::string::npos && input->getSceneClass().getName() == "UsdUVTexture") {
+        if (input->getSceneClass().getName() == "UsdUVTexture") {
             try {
                 UpdateGuard guard(input);
 
@@ -455,6 +472,16 @@ Material::updateTerminal(pxr::TfToken terminalName,
                     input->set(input->getSceneClass().getAttributeKey<Rgb>("scale"), Rgb(2.0f));
                     input->set(input->getSceneClass().getAttributeKey<Rgb>("bias"), Rgb(-1.0f));
                     input->set(input->getSceneClass().getAttributeKey<Int>("sourceColorSpace"), 0);
+                }
+
+                // Scalar USD Preview Surface inputs are data.  Force their
+                // per-channel UsdUVTexture clone to the unconditional raw
+                // path so OCIO file rules cannot gamma/gamut-transform a
+                // greyscale metallic, roughness, opacity, or mask map.
+                if (isDataTextureInput(rel.outputName)) {
+                    input->set(input->getSceneClass().getAttributeKey<Int>("sourceColorSpace"), 0);
+                    input->set(input->getSceneClass().getAttributeKey<String>("source_color_space"),
+                               std::string());
                 }
 
                 // Channel binding

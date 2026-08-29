@@ -294,14 +294,17 @@ native MoonRay OCIO path:
 
 - `ImageMap.source_color_space = auto` uses OCIO file rules from the active
   config.
-- `ImageMap.source_color_space = raw/data` bypasses source conversion.
+- `ImageMap.source_color_space = raw/data` resolves through the active OCIO
+  config; when the resolved color space is marked as data, source conversion is
+  bypassed.
 - explicit source names such as `ARRI LogC4`, `Linear ARRI Wide Gamut 4`, and
   `Gamma 2.4 Rec.709 - Texture` are honored when present in the config.
 - `UsdUVTexture.sourceColorSpace = raw/sRGB/auto` is preserved; the optional
-  `UsdUVTexture.source_color_space` override can force `auto`, `raw`, `data`,
-  or an explicit OCIO color space.
-- legacy gamma remains available for old scenes, but is bypassed when an OCIO
-  source transform is active.
+  `UsdUVTexture.source_color_space` override can force `auto`, an OCIO-resolved
+  data space such as `raw`/`data`, or an explicit OCIO color space.
+- legacy source gamma decoding has been removed from `ImageMap`, `UsdUVTexture`,
+  `BasicTexture`, and `UdimTexture`; artistic color-correction gamma nodes remain
+  separate grading controls.
 
 Native normal/utility texture paths pass `raw`. Native color projection and
 triplanar paths use `auto`.

@@ -16,6 +16,9 @@ namespace OCIO = OCIO_NAMESPACE;
 
 namespace {
 
+constexpr const char* sTextureRenderingColorSpaceEnv =
+        "MOONRAY_OCIO_RENDERING_COLOR_SPACE";
+
 bool
 isNoneToken(const pxr::TfToken& token)
 {
@@ -144,6 +147,7 @@ struct ColorManagement::Impl
 
     std::string resolveColorSpace(const pxr::TfToken& token);
     bool hasUsableConfig() const;
+    void publishTextureRenderingColorSpace() const;
     void rebuildProcessor();
     void transform(float* color, int channels) const;
     std::string diagnosticSummary() const;
@@ -204,6 +208,7 @@ ColorManagement::ColorManagement()
     }
     mImpl->workingColorSpace = mImpl->resolveColorSpace(pxr::TfToken());
     mImpl->rebuildProcessor();
+    mImpl->publishTextureRenderingColorSpace();
 }
 
 ColorManagement::~ColorManagement() = default;
@@ -218,6 +223,7 @@ ColorManagement::setRenderingColorSpace(const pxr::TfToken& token)
     mImpl->renderingColorSpaceToken = token;
     mImpl->workingColorSpace = mImpl->resolveColorSpace(token);
     mImpl->rebuildProcessor();
+    mImpl->publishTextureRenderingColorSpace();
     return true;
 }
 
@@ -261,6 +267,16 @@ bool
 ColorManagement::Impl::hasUsableConfig() const
 {
     return colorConfig && !ocioEnv.empty() && ocioFileExists && !rawFallback;
+}
+
+void
+ColorManagement::Impl::publishTextureRenderingColorSpace() const
+{
+    if (hasUsableConfig() && !workingColorSpace.empty()) {
+        setenv(sTextureRenderingColorSpaceEnv, workingColorSpace.c_str(), 1);
+    } else {
+        unsetenv(sTextureRenderingColorSpaceEnv);
+    }
 }
 
 std::string

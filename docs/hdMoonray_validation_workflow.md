@@ -322,13 +322,14 @@ When validating color behavior, record all of these separately:
 5. EXR metadata from `oiiotool --info -v`.
 6. Viewport/IPR display behavior, separately from disk EXR values.
 
-Use TX textures for production texture color probes. The 2026 audit showed that
-TX `sourceColorSpace = auto` and `sRGB` follow MoonRay's 8-bit gamma behavior,
-while `sourceColorSpace = raw` differs as expected. Direct PNG/JPG/BMP and
-non-tiled source files can render or fail in ways that are not clean production
-texture-color probes for hdMoonray. Texture destination gamut conversion into
-ACEScg, Linear Rec.2020, or other non-native renderer working spaces remains
-unimplemented until a MoonRay-supported map or texture conversion path is proven.
+Use TX textures for production texture color probes. Current texture source
+interpretation is OCIO-driven: `auto` uses active config file rules, explicit
+tokens resolve through the active config, and `raw` / `data` bypass source
+conversion. Direct PNG/JPG/BMP and non-tiled source files can render or fail in
+ways that are not clean production texture-color probes for hdMoonray. Texture
+destination gamut conversion into ACEScg, Linear Rec.2020, or other non-native
+renderer working spaces must be proven with generated RDLA/RDL and sampled
+pixels.
 
 MaterialX image color-space behavior remains `UNKNOWN` until a concrete
 MaterialX image network is exported to USD, converted to RDLA, rendered, and
