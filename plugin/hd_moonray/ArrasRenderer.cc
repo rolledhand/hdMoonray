@@ -24,10 +24,6 @@ ArrasRenderer::ArrasRenderer()
     arras4::sdk::SDK::configAthenaLogger();
 
     mSDK.reset(new arras4::sdk::SDK);
-    // Scene updates are sent by Hydra's render thread while framebuffer credit
-    // messages are sent by the Arras receive callback. Serialize both through
-    // the SDK's outgoing queue instead of writing to the endpoint concurrently.
-    mSDK->setAsyncSend();
 
     mSDK->setMessageHandler([this](const arras4::api::Message& msg) { messageHandler(msg); });
     mSDK->setExceptionCallback([this](const std::exception& e) { exceptionHandler(e); });
