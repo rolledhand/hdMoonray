@@ -316,10 +316,7 @@ ArrasRenderer::resolve(MoonrayOutput output, PixelData& pd, bool forceUpdate)
 
     // see if no change since last time
     unsigned n = mFbReceiver->getFbActivityCounter();
-    // A delta render can reset/reuse the framebuffer activity counter.  While
-    // the latest update is still rendering, do not suppress the resolve just
-    // because the counter happens to match the previous frame.
-    if (!forceUpdate && mFrameComplete && n == pd.filmActivity) return false;
+    if (!forceUpdate && n == pd.filmActivity) return false;
     pd.filmActivity = n;
 
     if (output.isBeauty()) {
@@ -359,12 +356,6 @@ ArrasRenderer::getElapsedSeconds() const
 void
 ArrasRenderer::beginUpdate()
 {
-    std::lock_guard<std::mutex> guard(mMutex);
-    if (!mUpdateActive && mConnected && mSDK && mSDK->isEngineReady()) {
-        // Match the in-process renderer lifecycle: stop the current frame
-        // before applying a new Hydra scene update.
-        mSDK->pause();
-    }
     mUpdateActive = true;
 }
 
@@ -387,12 +378,9 @@ ArrasRenderer::endUpdate()
 
         // send any changes in the scene context as an RDLMessage
         scene_rdl2::rdl2::BinaryWriter writer(*mSceneContext);
-        // Houdini 22's Hydra 2 update lifecycle can reuse scene-change state
-        // across Arras frames.  Delta encoding then produces a message which
-        // is acknowledged by the client but not applied by MCRT.  Send a
-        // complete scene for interactive Houdini updates until the H22 delta
-        // protocol is fixed; correctness is more important than bandwidth.
-        writer.setDeltaEncoding(false);
+        // first message to a session sends complete scene, subsequent messages
+        // send only a delta relative to the last update
+        writer.setDeltaEncoding(mFirstMessageSent);
 
         // write our data to RDLB and put it in an RDLMessage.
         mcrt::RDLMessage::Ptr rdlMsg = std::make_shared<mcrt::RDLMessage>();
@@ -407,10 +395,7 @@ ArrasRenderer::endUpdate()
             }
         }
         mSendEmptyUpdate = false;
-        // A complete scene payload must force MCRT to reload its render
-        // context.  Without this flag MCRT treats the payload as a delta and
-        // can acknowledge it without producing a new frame.
-        rdlMsg->mForceReload = true;
+        rdlMsg->mForceReload = false;
 
         // Set the frame id (aka sync id) so that we can tell when we
         // start receiving frames associated with this update
@@ -419,9 +404,6 @@ ArrasRenderer::endUpdate()
         // Send the render data to the computation
         try {
             mSDK->sendMessage(rdlMsg);
-            // Resume rendering only after the new scene payload has been
-            // queued, so MCRT starts the next frame from the updated scene.
-            mSDK->resume();
         } catch (std::exception& ex) {
             Logger::error("RDL message send failed: ",ex.what());
             hdmLogArras("sendUpdateFailed");
