@@ -53,6 +53,7 @@ private:
     HdMoonray_RenderDelegate& mRenderDelegate;
     mutable bool mDeferIsConverged = false;
     bool mProductRenderComplete = false; 
+    unsigned mRenderSettingsVersion = 0;
     bool mShown = false;
 };
 

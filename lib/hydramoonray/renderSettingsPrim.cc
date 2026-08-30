@@ -22,6 +22,9 @@ HdMoonray_RenderSettings::_Sync(HdSceneDelegate *sceneDelegate,
                                 HdRenderParam *renderParam,
                                 const HdDirtyBits *dirtyBits)
 {
+    if (*dirtyBits != HdRenderSettings::Clean) {
+        ++mVersion;
+    }
 }
 
 }

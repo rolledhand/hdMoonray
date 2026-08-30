@@ -12,10 +12,15 @@ class HdMoonray_RenderSettings final : public pxr::HdRenderSettings
 public:
     HdMoonray_RenderSettings(pxr::SdfPath const& id);
 
+    unsigned getVersion() const { return mVersion; }
+
 protected:
     void _Sync(pxr::HdSceneDelegate *sceneDelegate, 
            pxr::HdRenderParam *renderParam,
            const pxr::HdDirtyBits *dirtyBits) override;
+
+private:
+    unsigned mVersion = 0;
 };
 
 }
