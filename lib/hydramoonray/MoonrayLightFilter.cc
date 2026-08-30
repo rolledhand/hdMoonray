@@ -81,6 +81,10 @@ MoonrayLightFilter::syncParams(const PrimAccess& access,
         } else {
             VtValue val = access.Get(TfToken(attrName));
             if (val.IsEmpty()) {
+                val = getTerminalNodeParameter(
+                    access.id(), "lightFilter", TfToken(attrName), sceneDelegate);
+            }
+            if (val.IsEmpty()) {
                 (*attrIt).setToDefault();
             } else {
                 (*attrIt).set(val);
@@ -196,6 +200,10 @@ MoonrayLightFilter::getOrCreateFilter(const PrimAccess& access,
         classToken = vtClass.UncheckedGet<pxr::TfToken>();
     } else if (vtClass.IsHolding<std::string>()) {
         classToken = pxr::TfToken(vtClass.UncheckedGet<std::string>());
+    }
+    if (classToken.IsEmpty()) {
+        classToken = getTerminalNodeIdentifier(
+            access.id(), "lightFilter", access.sceneDelegate());
     }
 
     if (!renderDelegate.scene().checkClassInterface(classToken.GetString(), MoonrayAttribute::InterfaceType::INTERFACE_LIGHTFILTER)) {

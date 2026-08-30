@@ -98,6 +98,63 @@ namespace hdMoonray {
 
     void dumpMaterialNetworkMap(const HdMaterialNetworkMap& networkmap);
 
+namespace {
+
+const HdMaterialNode*
+getTerminalNode(const SdfPath& id,
+                const std::string& terminalName,
+                const HdMaterialNetworkMap& networkmap)
+{
+    auto networkIt = networkmap.map.find(TfToken(terminalName));
+    if (networkIt == networkmap.map.end() || networkIt->second.nodes.empty()) {
+        return nullptr;
+    }
+
+    const HdMaterialNetwork& network = networkIt->second;
+    for (auto nodeIt = network.nodes.rbegin(); nodeIt != network.nodes.rend(); ++nodeIt) {
+        if (nodeIt->path == id || nodeIt->path.MakeAbsolutePath(id) == id) {
+            return &*nodeIt;
+        }
+    }
+    // Hydra orders the terminal after any upstream pattern nodes.
+    return &network.nodes.back();
+}
+
+} // namespace
+
+TfToken
+getTerminalNodeIdentifier(const SdfPath& id,
+                          const std::string& terminalName,
+                          HdSceneDelegate* sceneDelegate)
+{
+    VtValue resource = sceneDelegate->GetMaterialResource(id);
+    if (!resource.IsHolding<HdMaterialNetworkMap>()) {
+        return TfToken();
+    }
+    const HdMaterialNode* node = getTerminalNode(
+        id, terminalName, resource.UncheckedGet<HdMaterialNetworkMap>());
+    return node ? node->identifier : TfToken();
+}
+
+VtValue
+getTerminalNodeParameter(const SdfPath& id,
+                         const std::string& terminalName,
+                         const TfToken& parameterName,
+                         HdSceneDelegate* sceneDelegate)
+{
+    VtValue resource = sceneDelegate->GetMaterialResource(id);
+    if (!resource.IsHolding<HdMaterialNetworkMap>()) {
+        return VtValue();
+    }
+    const HdMaterialNode* node = getTerminalNode(
+        id, terminalName, resource.UncheckedGet<HdMaterialNetworkMap>());
+    if (!node) {
+        return VtValue();
+    }
+    auto parameterIt = node->parameters.find(parameterName);
+    return parameterIt == node->parameters.end() ? VtValue() : parameterIt->second;
+}
+
 MoonrayObject
 getTerminalInternal(const SdfPath& id, 
             const std::string& terminalName, 

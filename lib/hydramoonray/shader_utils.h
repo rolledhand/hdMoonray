@@ -25,4 +25,18 @@ getNodeByConnection(const pxr::SdfPath& id,
                     const std::string& paramName,
                     HdMoonray_RenderDelegate&, pxr::HdSceneDelegate*);
 
+// Read the terminal node authored by UsdLuxPluginLightFilter.  Houdini's
+// Light Filter Library represents third-party filters as a material network
+// whose identifier is the renderer class and whose inputs are node parameters.
+pxr::TfToken
+getTerminalNodeIdentifier(const pxr::SdfPath& id,
+                          const std::string& terminalName,
+                          pxr::HdSceneDelegate* sceneDelegate);
+
+pxr::VtValue
+getTerminalNodeParameter(const pxr::SdfPath& id,
+                         const std::string& terminalName,
+                         const pxr::TfToken& parameterName,
+                         pxr::HdSceneDelegate* sceneDelegate);
+
 }
