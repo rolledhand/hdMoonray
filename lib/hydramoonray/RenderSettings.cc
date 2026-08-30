@@ -85,9 +85,14 @@ void RenderSettings::apply()
         Logger::setDebugLevel();
     }
 
+    // Houdini 22 identifies Solaris viewport renders with houdini:viewport.
+    // Older Houdini releases used houdini:interactive, so accept either key.
+    // husk does not provide these viewport-only settings.
     static const TfToken houdiniInteractive("houdini:interactive");
-    VtValue val = mDelegate.GetRenderSetting(houdiniInteractive);
-    mDelegate.options().setIsHoudini(not val.IsEmpty());
+    static const TfToken houdiniViewport("houdini:viewport");
+    const VtValue interactive = mDelegate.GetRenderSetting(houdiniInteractive);
+    const VtValue viewport = mDelegate.GetRenderSetting(houdiniViewport);
+    mDelegate.options().setIsHoudini(!interactive.IsEmpty() || !viewport.IsEmpty());
 
     // ---------------------------------------------------------------------------------
     // support render settings "moonray:sceneVariable:<name>" and "moonray:sceneVariable_<name>" for any

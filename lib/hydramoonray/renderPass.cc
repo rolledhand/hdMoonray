@@ -280,10 +280,6 @@ void
 HdMoonray_RenderPass::_Execute(const HdRenderPassStateSharedPtr& renderPassState,
                                const TfTokenVector& renderTags)
 {
-    if (mProductRenderComplete) {
-        return;
-    }
-
     HdSceneIndexBaseRefPtr sceneIndex = GetRenderIndex()->GetTerminalSceneIndex();
     
     // Determine if we should use a render settings prim or legacy render settings.
@@ -295,14 +291,34 @@ HdMoonray_RenderPass::_Execute(const HdRenderPassStateSharedPtr& renderPassState
                 GetRenderIndex()->GetBprim(HdPrimTypeTokens->renderSettings, rsp));
         }
     }
-    if (rsprim) {
-        execFromRenderSettingsPrim(rsprim);
-    } else {
+    // Apply client settings before deciding whether this is an interactive
+    // Houdini render. Houdini 22 uses houdini:viewport for this distinction.
+    mRenderDelegate.applySettings();
+
+    // An active RenderSettings prim also exists in the Solaris viewport. It
+    // must not switch IPR to the one-shot, disk-product batch path: Houdini
+    // communicates the active prim's viewport settings through SetRenderSetting.
+    if (!rsprim || mRenderDelegate.options().isHoudini()) {
+        mProductRenderComplete = false;
         execFromRenderPassState(renderPassState, renderTags, sceneIndex);
+        return;
+    }
+
+    // Offline product renders are one-shot, but any scene or RenderSettings
+    // change must clear completion so Hydra can execute the updated product.
+    const unsigned renderSettingsVersion = rsprim->getVersion();
+    const bool renderSettingsChanged =
+        renderSettingsVersion != mRenderSettingsVersion ||
+        rsprim->GetAndResetHasDirtyProducts();
+    if (renderSettingsChanged || mRenderDelegate.renderer().isUpdateActive()) {
+        mProductRenderComplete = false;
+        mRenderSettingsVersion = renderSettingsVersion;
+    }
+    if (!mProductRenderComplete) {
+        execFromRenderSettingsPrim(rsprim);
     }
 }
 
    
 
 }
-
